@@ -554,13 +554,16 @@ func (c *ServerCommand) runRecoveryMode() int {
 		sealType = configSeal.Type
 	}
 
+	infoKeys = append(infoKeys, "Seal Type")
+	info["Seal Type"] = sealType
+
 	var seal vault.Seal
 	defaultSeal := vault.NewDefaultSeal(&vaultseal.Access{
 		Wrapper: aeadwrapper.NewShamirWrapper(&wrapping.WrapperOptions{
 			Logger: c.logger.Named("shamir"),
 		}),
 	})
-	sealLogger := c.logger.ResetNamed(fmt.Sprintf("seal-%s", sealType))
+	sealLogger := c.logger.ResetNamed(fmt.Sprintf("seal.%s", sealType))
 	wrapper, sealConfigError = configutil.ConfigureWrapper(configSeal, &infoKeys, &info, sealLogger)
 	if sealConfigError != nil {
 		if !errwrap.ContainsType(sealConfigError, new(logical.KeyNotFoundError)) {
@@ -576,9 +579,6 @@ func (c *ServerCommand) runRecoveryMode() int {
 			Wrapper: wrapper,
 		})
 	}
-	infoKeys = append(infoKeys, "Seal Type")
-	info["Seal Type"] = configSeal.Type
-
 	barrierSeal = seal
 
 	// Ensure that the seal finalizer is called, even if using verify-only
@@ -965,7 +965,14 @@ func (c *ServerCommand) Run(args []string) int {
 				"in a Docker container, provide the IPC_LOCK cap to the container."))
 	}
 
-	inmemMetrics, prometheusEnabled, err := configutil.SetupTelemetry(config.Telemetry, c.UI, "vault", "Vault", useragent.String())
+	inmemMetrics, metricSink, prometheusEnabled, err := configutil.SetupTelemetry(&configutil.SetupTelemetryOpts{
+		Config:      config.Telemetry,
+		Ui:          c.UI,
+		ServiceName: "vault",
+		DisplayName: "Vault",
+		UserAgent:   useragent.String(),
+		ClusterName: config.ClusterName,
+	})
 	if err != nil {
 		c.UI.Error(fmt.Sprintf("Error initializing telemetry: %s", err))
 		return 1
@@ -1093,7 +1100,7 @@ func (c *ServerCommand) Run(args []string) int {
 			}
 
 			var seal vault.Seal
-			sealLogger := c.logger.ResetNamed(fmt.Sprintf("seal-%s", sealType))
+			sealLogger := c.logger.ResetNamed(fmt.Sprintf("seal.%s", sealType))
 			allLoggers = append(allLoggers, sealLogger)
 			defaultSeal := vault.NewDefaultSeal(&vaultseal.Access{
 				Wrapper: aeadwrapper.NewShamirWrapper(&wrapping.WrapperOptions{
@@ -1174,6 +1181,7 @@ func (c *ServerCommand) Run(args []string) int {
 		BuiltinRegistry:           builtinplugins.Registry,
 		DisableKeyEncodingChecks:  config.DisablePrintableCheck,
 		MetricsHelper:             metricsHelper,
+		MetricSink:                metricSink,
 		SecureRandomReader:        secureRandomReader,
 	}
 	if c.flagDev {
@@ -1705,6 +1713,10 @@ CLUSTER_SYNTHESIS_COMPLETE:
 
 	// Initialize the HTTP servers
 	for _, ln := range lns {
+		if ln.Config == nil {
+			c.UI.Error("Found nil listener config after parsing")
+			return 1
+		}
 		handler := vaulthttp.Handler(&vault.HandlerProperties{
 			Core:                  core,
 			ListenerConfig:        ln.Config,
@@ -1712,7 +1724,6 @@ CLUSTER_SYNTHESIS_COMPLETE:
 			RecoveryMode:          c.flagRecovery,
 		})
 
-		// We perform validation on the config earlier, we can just cast here
 		if len(ln.Config.XForwardedForAuthorizedAddrs) > 0 {
 			handler = vaulthttp.WrapForwardedForHandler(handler, ln.Config)
 		}

@@ -72,8 +72,7 @@ func UnixSocketListener(path string, unixSocketsConfig *UnixSocketsConfig) (net.
 	}, nil
 }
 
-func GetTLSConfig(
-	ln net.Listener,
+func TLSConfig(
 	l *configutil.Listener,
 	props map[string]string,
 	ui cli.Ui) (*tls.Config, reloadutil.ReloadFunc, error) {

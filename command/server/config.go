@@ -23,6 +23,8 @@ import (
 
 // Config is the configuration for the vault server.
 type Config struct {
+	entConfig
+
 	*configutil.SharedConfig `hcl:"-"`
 
 	Storage   *Storage `hcl:"-"`
@@ -291,9 +293,13 @@ func CheckConfig(c *Config, e error) (*Config, error) {
 		nonConfigSeals = append(nonConfigSeals, kms)
 	}
 
-	if len(nonConfigSeals) == 2 &&
-		(nonConfigSeals[0].Disabled && nonConfigSeals[1].Disabled || !nonConfigSeals[0].Disabled && !nonConfigSeals[1].Disabled) {
-		return nil, errors.New("seals: two seals provided but both are disabled or neither are disabled")
+	if len(nonConfigSeals) == 2 {
+		switch {
+		case nonConfigSeals[0].Disabled && nonConfigSeals[1].Disabled:
+			return nil, errors.New("seals: two seals provided but both are disabled")
+		case !nonConfigSeals[0].Disabled && !nonConfigSeals[1].Disabled:
+			return nil, errors.New("seals: two seals provided but neither is disabled")
+		}
 	}
 
 	return c, nil
@@ -445,6 +451,11 @@ func ParseConfig(d string) (*Config, error) {
 		if err := parseServiceRegistration(result, o, "service_registration"); err != nil {
 			return nil, errwrap.Wrapf("error parsing 'service_registration': {{err}}", err)
 		}
+	}
+
+	entConfig := &(result.entConfig)
+	if err := entConfig.parseConfig(list); err != nil {
+		return nil, errwrap.Wrapf("error parsing enterprise config: {{err}}", err)
 	}
 
 	return result, nil
